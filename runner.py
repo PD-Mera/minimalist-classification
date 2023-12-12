@@ -11,8 +11,6 @@ from torchvision import transforms as T
 import timm
 import albumentations as A
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-os.environ["XDG_CACHE_HOME"] = "../.cache"
 
 
 def print_verbose(verbose=True, *args, **kwargs): print(*args) if verbose else None
@@ -22,27 +20,31 @@ class LoadDataset(Dataset):
 		Custom dataset on your own, for example got class_1 dir and class_2 dir as input, folder contain images only
 	"""
 	def __init__(self, 
-				 class_1_dir = "./data/Real", 
-				 class_2_dir = "./data/Fake"):
+				 class_1_dir = "...", 
+				 class_2_dir = "...",
+				 image_size = 224):
 		super(LoadDataset, self).__init__()
-		self.class_names = ["real", "fake"]
+		self.class_names = ["class 1", "class 2"]
 		self.class_num = len(self.class_names)
 		self.images = []
 		self.labels = []
 
-		for imagename in os.listdir(class_1_dir):
-			if self.is_image_file(os.path.join(class_1_dir, imagename)):
-				self.images.append(os.path.join(class_1_dir, imagename))
-				self.labels.append("real")
 
-		for imagename in os.listdir(class_2_dir):
-			if self.is_image_file(os.path.join(class_2_dir, imagename)):
-				self.images.append(os.path.join(class_2_dir, imagename))
-				self.labels.append("fake")
+		for ids in os.listdir(class_1_dir):
+			for filepath in os.listdir(os.path.join(class_1_dir, ids)):
+				if self.is_image_file(os.path.join(class_1_dir, ids, filepath)):
+					self.images.append(os.path.join(class_1_dir, ids, filepath))
+					self.labels.append("class 1")
+
+		for ids in os.listdir(class_2_dir):
+			for filepath in os.listdir(os.path.join(class_2_dir, ids)):
+				if self.is_image_file(os.path.join(class_2_dir, ids, filepath)):
+					self.images.append(os.path.join(class_2_dir, ids, filepath))
+					self.labels.append("class 2")
 
 		self.transform = T.Compose(
 			[
-				T.Resize((224, 224)),
+				T.Resize((image_size, image_size)),
 				T.ToTensor(),
 				T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 			]
@@ -51,8 +53,9 @@ class LoadDataset(Dataset):
 			[
 				A.HorizontalFlip(p = 0.5),
 				A.VerticalFlip(p = 0.0),
-				A.Rotate(limit = 45, p = 0.5),
-				A.RandomBrightnessContrast(brightness_limit = 0.2, contrast_limit = 0.2, p = 0.0)
+				A.Rotate(limit = 45, p = 0.0),
+				A.RandomBrightnessContrast(brightness_limit = 0.2, contrast_limit = 0.2, p = 0.2),
+				A.GaussNoise(var_limit=(50.0, 150.0), mean=0, per_channel=True, p=0.5)
 			]
 		)
   
@@ -83,11 +86,20 @@ class LoadDataset(Dataset):
 
 
 class BaseModel(nn.Module):
-	def __init__(self, pretrained_name, out_channels = 1):
+	def __init__(self, pretrained_name, out_channels = 1, image_size = 224):
 		super(BaseModel, self).__init__()
-		self.backbone = timm.create_model(pretrained_name, pretrained = True)
-		if pretrained_name in ["mobilenetv3_large_100.miil_in21k_ft_in1k", "mobilenetv3_small_100.lamb_in1k"]:
-			self.head = nn.Linear(1000, out_channels)
+		
+		if pretrained_name in ["vit_small_patch14_reg4_dinov2.lvd142m"]:
+			self.backbone = timm.create_model(pretrained_name, pretrained = True, img_size = image_size)
+		else:
+			self.backbone = timm.create_model(pretrained_name, pretrained = True)
+
+		if pretrained_name in ["vit_small_patch14_reg4_dinov2.lvd142m"]:
+			self.head = nn.Linear(384, out_channels)
+		elif pretrained_name in ["swin_tiny_patch4_window7_224.ms_in22k"]:
+			self.head = nn.Linear(21841, out_channels)
+		elif pretrained_name in ["eva02_tiny_patch14_224.mim_in22k"]:
+			self.head = nn.Linear(192, out_channels)
 		else:
 			self.head = nn.Linear(1000, out_channels)
 	def forward(self, x):
@@ -99,10 +111,10 @@ class BaseModel(nn.Module):
 class CustomLoss(nn.Module):
 	def __init__(self):
 		super(CustomLoss, self).__init__()
-		self.huber = nn.HuberLoss()
+		self.ce = nn.CrossEntropyLoss()
 	def forward(self, inputs, targets):
-		huber_loss = self.huber(inputs, targets)
-		return huber_loss
+		ce_loss = self.ce(inputs, targets)
+		return ce_loss
 
 
 class ONNXProcessedModel(nn.Module):
@@ -111,22 +123,26 @@ class ONNXProcessedModel(nn.Module):
 		self.mean = [0.485, 0.456, 0.406]
 		self.std  = [0.229, 0.224, 0.225]
 		self.model = model
+		self.model.eval()
+		self.sm = nn.Softmax(dim=-1)
 	def forward(self, x):
+		x = x / 255.0
 		R = (x[:, 0:1, :, :] - self.mean[0]) / self.std[0]
 		G = (x[:, 1:2, :, :] - self.mean[1]) / self.std[1]
 		B = (x[:, 2:3, :, :] - self.mean[2]) / self.std[2]
 		x = torch.cat([R, G, B], dim = 1)
 		x = self.model(x)
-		x = torch.clamp(x, min=-1.0, max=1.0)
+		x = self.sm(x)
 		return x
 
 class Config:
-	def __init__(self, epoch = 100, batch_size = 32, num_workers = 8, learning_rate = 1e-4, num_classes = 2):
+	def __init__(self, epoch = 100, batch_size = 32, num_workers = 8, learning_rate = 1e-4, num_classes = 2, image_size = 224):
 		self.EPOCH = epoch
 		self.BATCH_SIZE = batch_size
 		self.NUM_WORKERS = num_workers
 		self.LEARNING_RATE = learning_rate
 		self.NUM_CLASSES = num_classes
+		self.IMAGE_SIZE = image_size
 
 
 class Runner:
@@ -136,6 +152,7 @@ class Runner:
 				 train_valid_ratio: list = [0.9, 0.1],
 				 verbose = True, 
 				 pretrained_name = "resnet18",
+				 pretrained_path = None,
 				 save_path = "./weights/",
 				 infer_mode = False):
 		
@@ -166,8 +183,11 @@ class Runner:
 		os.makedirs(self.MODEL_SAVEPATH, exist_ok=True) if not infer_mode else None
 
 		self.PRETRAINED_NAME = pretrained_name
-		self.model = BaseModel(pretrained_name = self.PRETRAINED_NAME, out_channels=self.TRAIN_CONFIG.NUM_CLASSES)
+		self.model = BaseModel(pretrained_name = self.PRETRAINED_NAME, 
+							   out_channels=self.TRAIN_CONFIG.NUM_CLASSES,
+							   image_size=self.TRAIN_CONFIG.IMAGE_SIZE)
 		self.model = self.model.to(self.DEVICE)
+		self.model.load_state_dict(torch.load(pretrained_path)) if pretrained_path is not None else None
 
 		self.loss_fn = CustomLoss() if not infer_mode else None
 		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.TRAIN_CONFIG.LEARNING_RATE) if not infer_mode else None
@@ -175,7 +195,7 @@ class Runner:
 		
 
 	def create_dataloader(self):
-		dataset = LoadDataset()
+		dataset = LoadDataset(image_size=self.TRAIN_CONFIG.IMAGE_SIZE)
 		train_data, valid_data = torch.utils.data.random_split(dataset, self.TRAIN_VALID_RATIO)
 
 		train_loader = DataLoader(train_data, 
@@ -201,11 +221,14 @@ class Runner:
 			loss.backward()
 			self.optimizer.step()
 
+			# print(torch.softmax(output[0:5], dim=1))
+			# print(target[0:5])
+			
 			pred = torch.argmax(output, dim=1)
 			target = torch.argmax(target, dim=1)
 			train_correct += pred.eq(target.view_as(pred)).sum().item()
 
-			if batch_idx % 100 == 0:
+			if batch_idx % 10 == 0:
 				iter_num = batch_idx * len(data)
 				total_data = len(self.train_loader.dataset)
 				iter_num = str(iter_num).zfill(len(str(total_data)))
@@ -213,8 +236,7 @@ class Runner:
 				print_verbose(self.VERBOSE, f'Train Epoch {epoch + 1}: [{iter_num}/{total_data} ({total_percent:2.0f}%)] | Loss: {loss.item():.10f} | LR: {self.optimizer.param_groups[0]["lr"]:.10f}')
 
 		train_accuracy = 100. * train_correct / len(self.train_loader.dataset)
-		return train_accuracy    
-
+		return train_accuracy   
 
 	def valid_step(self):
 		self.model.eval()
@@ -222,8 +244,6 @@ class Runner:
 		for (data, target) in self.valid_loader:
 			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
 			output = self.model(data)
-			print(output)
-			print(target)
 			pred = torch.argmax(output, dim=1)
 			target = torch.argmax(target, dim=1)
 			# print(pred)
@@ -233,11 +253,29 @@ class Runner:
 		valid_accuracy = 100. * valid_correct / len(self.valid_loader.dataset)
 		return valid_accuracy
 
+	def train_allocate(self):
+		self.model.train()
+		for batch_idx, (data, target) in enumerate(self.train_loader):
+			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
+			self.optimizer.zero_grad()
+			output = self.model(data)
+			loss = self.loss_fn(output, target)
+			break 
+
+	def valid_allocate(self):
+		self.model.eval()
+		for (data, target) in self.valid_loader:
+			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
+			output = self.model(data)
+			break
+
 
 	def train(self):
 		max_valid_accuracy = 0.0
 		for epoch in range(self.TRAIN_CONFIG.EPOCH):
 			tik = time.time()
+			self.train_allocate()
+			self.valid_allocate()
 			train_accuracy = self.train_step(epoch)
 			valid_accuracy = self.valid_step()
 			print_verbose(self.VERBOSE, f'Training accuracy: {train_accuracy}%')
@@ -265,7 +303,7 @@ class Runner:
 
 		transform = T.Compose(
 			[
-				T.Resize((224, 224)),
+				T.Resize((self.TRAIN_CONFIG.IMAGE_SIZE, self.TRAIN_CONFIG.IMAGE_SIZE)),
 				T.ToTensor(),
 				T.Normalize(mean=[0.485, 0.456, 0.406],
 							std=[0.229, 0.224, 0.225])
@@ -278,7 +316,26 @@ class Runner:
 		inputs = inputs.to(self.DEVICE)
 
 		outputs = self.model(inputs)
-		print(outputs)
+		print(torch.softmax(outputs, -1))
+
+
+	def average_weights(self, list_weights_path: list, save_path):
+		def combine_2_weight(sdA, sdB):
+			for key in sdA:
+				sdA[key] = sdB[key] + sdA[key]
+
+			return sdA
+
+		sdA = torch.load(list_weights_path[0])
+		for weights_path in list_weights_path[1:]:
+			sdA = combine_2_weight(sdA, torch.load(weights_path))
+
+		for key in sdA:
+			sdA[key] = sdA[key]	/ len(list_weights_path)
+
+		torch.save(sdA, save_path)
+		print_verbose(self.VERBOSE, f'Average {len(list_weights_path)} epoch, save at {save_path}')
+
 
 	def convert_onnx(self, weights_path):
 		self.model.load_state_dict(torch.load(weights_path))
@@ -287,7 +344,7 @@ class Runner:
 		onnx_model = ONNXProcessedModel(self.model)
 		onnx_model.eval()
 		onnx_model = onnx_model.to(self.DEVICE)
-		dummy_input = torch.randn(4, 3, 224, 224).to(self.DEVICE)
+		dummy_input = torch.randn(4, 3, self.TRAIN_CONFIG.IMAGE_SIZE, self.TRAIN_CONFIG.IMAGE_SIZE).to(self.DEVICE)
 		torch.onnx.export(
 			onnx_model,                      # model being run
 			dummy_input,                    # model input (or a tuple for multiple inputs)
@@ -301,17 +358,39 @@ class Runner:
 						  'output': {0: 'batch_size'}}
 		)
 
+	def infer_onnx(self, onnx_model_path, input_imagepath):
+		import onnxruntime
+		ort_session = onnxruntime.InferenceSession(onnx_model_path, providers = ['CPUExecutionProvider'])
+
+		img_bgr_cv2 = cv2.imread(input_imagepath, cv2.IMREAD_COLOR)
+		img_rgb_cv2 = cv2.cvtColor(img_bgr_cv2, cv2.COLOR_BGR2RGB)
+		img_rgb_cv2 = cv2.resize(img_rgb_cv2, (224, 224), interpolation = cv2.INTER_LINEAR)
+		img_rgb_cv2 = np.float32(img_rgb_cv2)
+		img_rgb_cv2_chw = img_rgb_cv2.transpose(2, 0, 1)
+		img_rgb_cv2_bchw = np.expand_dims(img_rgb_cv2_chw, 0)
+		ort_inputs = {ort_session.get_inputs()[0].name: img_rgb_cv2_bchw}
+		ort_outputs = ort_session.run(None, ort_inputs)
+		print(ort_outputs[0][0])
+
 
 if __name__ == "__main__":
-	# print([x for x in timm.list_models(pretrained=True) if "mobilenetv3" in x])
+	# print([x for x in timm.list_models(pretrained=True) if "eva" in x])
+	# exit()
 
-	infer_mode = False
+	os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+	os.environ["XDG_CACHE_HOME"] = "../.cache"
 
-	train_config = Config(epoch=100, batch_size=16, num_workers=1, learning_rate=1e-4, num_classes=2)
-	runner = Runner(pretrained_name = "mobilenetv3_small_100.lamb_in1k",
+
+	train_config = Config(epoch=100, 
+						  batch_size=64, 
+						  num_workers=8, 
+						  learning_rate=1e-4, 
+						  num_classes=2,
+						  image_size=224)
+	runner = Runner(pretrained_name = "eva02_tiny_patch14_224.mim_in22k",
 				    train_config = train_config,
 					save_path = "./weights/",
-					infer_mode = infer_mode,
-					train_valid_ratio = [0.4, 0.6],)
+					infer_mode = False,
+					train_valid_ratio = [0.95, 0.05],)
 	runner.train()
 
