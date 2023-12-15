@@ -7,11 +7,10 @@ from PIL import Image
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms as T
 import timm
 import albumentations as A
-
-
 
 def print_verbose(verbose=True, *args, **kwargs): print(*args) if verbose else None
 
@@ -23,55 +22,68 @@ class LoadDataset(Dataset):
 				 class_1_dir = "...", 
 				 class_2_dir = "...",
 				 image_size = 224):
+		"""
+			Add your image paths and labes to self.images and self.labels, for example:
+			'''
+				for ids in os.listdir(class_1_dir):
+					for filepath in os.listdir(os.path.join(class_1_dir, ids)):
+						if self.is_image_file(os.path.join(class_1_dir, ids, filepath)):
+							self.images.append(os.path.join(class_1_dir, ids, filepath))
+							self.labels.append("class 1")
+
+				for ids in os.listdir(class_2_dir):
+					for filepath in os.listdir(os.path.join(class_2_dir, ids)):
+						if self.is_image_file(os.path.join(class_2_dir, ids, filepath)):
+							self.images.append(os.path.join(class_2_dir, ids, filepath))
+							self.labels.append("class 2")
+			'''
+		"""
 		super(LoadDataset, self).__init__()
 		self.class_names = ["class 1", "class 2"]
 		self.class_num = len(self.class_names)
 		self.images = []
 		self.labels = []
 
+		for _ in range(10000):
+			self.images.append("random_img_path")
+			self.labels.append(random.choice(self.class_names))
 
-		for ids in os.listdir(class_1_dir):
-			for filepath in os.listdir(os.path.join(class_1_dir, ids)):
-				if self.is_image_file(os.path.join(class_1_dir, ids, filepath)):
-					self.images.append(os.path.join(class_1_dir, ids, filepath))
-					self.labels.append("class 1")
-
-		for ids in os.listdir(class_2_dir):
-			for filepath in os.listdir(os.path.join(class_2_dir, ids)):
-				if self.is_image_file(os.path.join(class_2_dir, ids, filepath)):
-					self.images.append(os.path.join(class_2_dir, ids, filepath))
-					self.labels.append("class 2")
-
-		self.transform = T.Compose(
-			[
-				T.Resize((image_size, image_size)),
-				T.ToTensor(),
-				T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-			]
-		)
-		self.augment = A.Compose(
-			[
-				A.HorizontalFlip(p = 0.5),
-				A.VerticalFlip(p = 0.0),
-				A.Rotate(limit = 45, p = 0.0),
-				A.RandomBrightnessContrast(brightness_limit = 0.2, contrast_limit = 0.2, p = 0.2),
-				A.GaussNoise(var_limit=(50.0, 150.0), mean=0, per_channel=True, p=0.5)
-			]
-		)
+		self.transform = T.Compose([
+			T.Resize((image_size, image_size)),
+			T.ToTensor(),
+			T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+		])
+		self.augment = A.Compose([
+			A.HorizontalFlip(p = 0.5),
+			A.VerticalFlip(p = 0.0),
+			A.Rotate(limit = 45, p = 0.0),
+			A.RandomBrightnessContrast(brightness_limit = 0.2, contrast_limit = 0.2, p = 0.2),
+			A.GaussNoise(var_limit=(50.0, 150.0), mean=0, per_channel=True, p=0.5)
+		])
   
 
 	def __getitem__(self, index):
-		image = Image.open(self.images[index]).convert("RGB")
-		label = self.labels[index]
+		"""
+			Get item, for example:
+			'''
+				image = Image.open(self.images[index]).convert("RGB")
+				label = self.labels[index]
 
-		# Augment
-		image_np = np.array(image)
-		augmented = self.augment(image=image_np)
-		image = Image.fromarray(augmented['image'])
+				# Augment
+				image_np = np.array(image)
+				augmented = self.augment(image=image_np)
+				image = Image.fromarray(augmented['image'])
 
-		image_tensor = self.transform(image)
+				image_tensor = self.transform(image)
 
-		label = self.class_names.index(label)
+				label = self.class_names.index(label)
+				tensor_label = torch.zeros(self.class_num)
+				tensor_label[label] = 1.0
+			'''
+		"""
+
+		image_tensor = torch.randn((3, 224, 224))
+		label = self.class_names.index(self.labels[index])
 		tensor_label = torch.zeros(self.class_num)
 		tensor_label[label] = 1.0
 	
@@ -192,7 +204,12 @@ class Runner:
 		self.loss_fn = CustomLoss() if not infer_mode else None
 		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.TRAIN_CONFIG.LEARNING_RATE) if not infer_mode else None
 		self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1, gamma=0.9) if not infer_mode else None
-		
+		self.writer = SummaryWriter()
+
+
+	def __del__(self):
+		self.writer.close()
+
 
 	def create_dataloader(self):
 		dataset = LoadDataset(image_size=self.TRAIN_CONFIG.IMAGE_SIZE)
@@ -212,46 +229,62 @@ class Runner:
 	def train_step(self, epoch):
 		self.model.train()
 		train_correct = 0
+		train_total = 0
+		train_loss = 0
 		for batch_idx, (data, target) in enumerate(self.train_loader):
 			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
 			self.optimizer.zero_grad()
 			output = self.model(data)
 			loss = self.loss_fn(output, target)
+			train_loss += loss.item()
 
 			loss.backward()
 			self.optimizer.step()
-
-			# print(torch.softmax(output[0:5], dim=1))
-			# print(target[0:5])
 			
 			pred = torch.argmax(output, dim=1)
 			target = torch.argmax(target, dim=1)
 			train_correct += pred.eq(target.view_as(pred)).sum().item()
+			train_total += target.size(0)
 
-			if batch_idx % 10 == 0:
+			self.writer.add_scalar(f"Epoch_{epoch}/train_accuracy", 100. * train_correct / train_total, batch_idx)
+			self.writer.add_scalar(f"Epoch_{epoch}/train_loss", loss.item(), batch_idx)
+			self.writer.flush()
+
+			total_data = len(self.train_loader.dataset)
+			if batch_idx % (total_data // self.TRAIN_CONFIG.BATCH_SIZE // 100) == 0:
 				iter_num = batch_idx * len(data)
-				total_data = len(self.train_loader.dataset)
 				iter_num = str(iter_num).zfill(len(str(total_data)))
 				total_percent = 100. * batch_idx / len(self.train_loader)
 				print_verbose(self.VERBOSE, f'Train Epoch {epoch + 1}: [{iter_num}/{total_data} ({total_percent:2.0f}%)] | Loss: {loss.item():.10f} | LR: {self.optimizer.param_groups[0]["lr"]:.10f}')
 
 		train_accuracy = 100. * train_correct / len(self.train_loader.dataset)
-		return train_accuracy   
+		train_loss = train_loss / (batch_idx + 1)
+		return train_accuracy, train_loss
 
-	def valid_step(self):
+	def valid_step(self, epoch):
 		self.model.eval()
 		valid_correct = 0
-		for (data, target) in self.valid_loader:
+		valid_total = 0
+		valid_loss = 0
+		for batch_idx, (data, target) in enumerate(self.valid_loader):
 			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
 			output = self.model(data)
+			loss = self.loss_fn(output, target)
+			valid_loss += loss.item()
+
 			pred = torch.argmax(output, dim=1)
 			target = torch.argmax(target, dim=1)
-			# print(pred)
-			# print(target)
+
 			valid_correct += pred.eq(target.view_as(pred)).sum().item()
+			valid_total += target.size(0)
+
+			self.writer.add_scalar(f"Epoch_{epoch}/valid_accuracy", 100. * valid_correct / valid_total, batch_idx)
+			self.writer.add_scalar(f"Epoch_{epoch}/valid_loss", loss.item(), batch_idx)
+			self.writer.flush()
 
 		valid_accuracy = 100. * valid_correct / len(self.valid_loader.dataset)
-		return valid_accuracy
+		valid_loss = valid_loss / (batch_idx + 1)
+		return valid_accuracy, valid_loss
 
 	def train_allocate(self):
 		self.model.train()
@@ -260,14 +293,16 @@ class Runner:
 			self.optimizer.zero_grad()
 			output = self.model(data)
 			loss = self.loss_fn(output, target)
-			break 
+			if batch_idx == 10:
+				break
 
 	def valid_allocate(self):
 		self.model.eval()
-		for (data, target) in self.valid_loader:
+		for batch_idx, (data, target) in enumerate(self.valid_loader):
 			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
 			output = self.model(data)
-			break
+			if batch_idx == 10:
+				break
 
 
 	def train(self):
@@ -276,10 +311,18 @@ class Runner:
 			tik = time.time()
 			self.train_allocate()
 			self.valid_allocate()
-			train_accuracy = self.train_step(epoch)
-			valid_accuracy = self.valid_step()
+			train_accuracy, train_loss = self.train_step(epoch)
+			valid_accuracy, valid_loss = self.valid_step(epoch)
 			print_verbose(self.VERBOSE, f'Training accuracy: {train_accuracy}%')
 			print_verbose(self.VERBOSE, f'Validating accuracy: {valid_accuracy}%')
+
+			self.writer.add_scalar("@Summary/train_loss", train_loss, epoch)
+			self.writer.add_scalar("@Summary/valid_loss", valid_loss, epoch)
+			self.writer.add_scalar("@Summary/train_accuracy", train_accuracy, epoch)
+			self.writer.add_scalar("@Summary/valid_accuracy", valid_accuracy, epoch)
+			self.writer.add_scalar("@Summary/learning_rate", self.optimizer.param_groups[0]["lr"], epoch)
+			self.writer.flush()
+
 			if valid_accuracy >= max_valid_accuracy:
 				max_valid_accuracy = valid_accuracy
 				torch.save(self.model.state_dict(), os.path.join(self.MODEL_SAVEPATH, f'{self.PRETRAINED_NAME}_best.pth'))
@@ -374,10 +417,10 @@ class Runner:
 
 
 if __name__ == "__main__":
-	# print([x for x in timm.list_models(pretrained=True) if "eva" in x])
+	# print([x for x in timm.list_models(pretrained=True) if "mobile" in x])
 	# exit()
 
-	os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+	os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 	os.environ["XDG_CACHE_HOME"] = "../.cache"
 
 
@@ -387,7 +430,7 @@ if __name__ == "__main__":
 						  learning_rate=1e-4, 
 						  num_classes=2,
 						  image_size=224)
-	runner = Runner(pretrained_name = "eva02_tiny_patch14_224.mim_in22k",
+	runner = Runner(pretrained_name = "mobilenetv3_small_050.lamb_in1k",
 				    train_config = train_config,
 					save_path = "./weights/",
 					infer_mode = False,
