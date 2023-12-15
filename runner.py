@@ -231,7 +231,12 @@ class Runner:
 		train_correct = 0
 		train_total = 0
 		train_loss = 0
+
+		total_data = len(self.train_loader.dataset)
+		batch_number = total_data // self.TRAIN_CONFIG.BATCH_SIZE 
+
 		for batch_idx, (data, target) in enumerate(self.train_loader):
+			batch_time_start = time.time()
 			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
 			self.optimizer.zero_grad()
 			output = self.model(data)
@@ -250,12 +255,18 @@ class Runner:
 			self.writer.add_scalar(f"Epoch_{epoch}/train_loss", loss.item(), batch_idx)
 			self.writer.flush()
 
-			total_data = len(self.train_loader.dataset)
-			if batch_idx % (total_data // self.TRAIN_CONFIG.BATCH_SIZE // 100) == 0:
+			batch_time_end = time.time()
+
+			print_fre = 1 # percent
+			if batch_idx % ((batch_number // 100) * print_fre) == 0:
+				remain_batch = batch_number - batch_idx + 1
+				eta = (batch_time_end - batch_time_start) * remain_batch + batch_number * (self.TRAIN_CONFIG.EPOCH - epoch)
+				eta = str(datetime.timedelta(seconds=eta))
 				iter_num = batch_idx * len(data)
 				iter_num = str(iter_num).zfill(len(str(total_data)))
 				total_percent = 100. * batch_idx / len(self.train_loader)
-				print_verbose(self.VERBOSE, f'Train Epoch {epoch + 1}: [{iter_num}/{total_data} ({total_percent:2.0f}%)] | Loss: {loss.item():.10f} | LR: {self.optimizer.param_groups[0]["lr"]:.10f}')
+				
+				print_verbose(self.VERBOSE, f'Train Epoch {epoch + 1}: [{iter_num}/{total_data} ({total_percent:2.0f}%)] | Loss: {loss.item():.10f} | LR: {self.optimizer.param_groups[0]["lr"]:.10f} | ETA: {eta}')
 
 		train_accuracy = 100. * train_correct / len(self.train_loader.dataset)
 		train_loss = train_loss / (batch_idx + 1)
@@ -307,7 +318,7 @@ class Runner:
 
 	def train(self):
 		max_valid_accuracy = 0.0
-		for epoch in range(self.TRAIN_CONFIG.EPOCH):
+		for epoch in range(1, self.TRAIN_CONFIG.EPOCH + 1):
 			tik = time.time()
 			self.train_allocate()
 			self.valid_allocate()
@@ -335,7 +346,7 @@ class Runner:
 
 			tok = time.time()
 			runtime = tok - tik
-			eta = int(runtime * (self.TRAIN_CONFIG.EPOCH - epoch - 1))
+			eta = int(runtime * (self.TRAIN_CONFIG.EPOCH - epoch))
 			eta = str(datetime.timedelta(seconds=eta))
 			print_verbose(self.VERBOSE, f'Runing time: Epoch {epoch + 1}: {str(datetime.timedelta(seconds=int(runtime)))} | ETA: {eta}')
 
