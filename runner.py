@@ -14,6 +14,9 @@ import albumentations as A
 
 def print_verbose(verbose=True, *args, **kwargs): print(*args) if verbose else None
 
+def byte2gigabyte(bytes, scale = 1024): return bytes / (scale ** 3)
+def byte2megabyte(bytes, scale = 1024): return bytes / (scale ** 2)
+
 class LoadDataset(Dataset):
 	"""
 		Custom dataset on your own, for example got class_1 dir and class_2 dir as input, folder contain images only
@@ -167,7 +170,7 @@ class Runner:
 				 pretrained_path = None,
 				 save_path = "./weights/",
 				 infer_mode = False):
-		
+
 		self.DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 		self.VERBOSE = verbose
 
@@ -191,7 +194,7 @@ class Runner:
 		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN LEN: {len(self.train_loader.dataset)} ***") if not infer_mode else None
 		print_verbose(self.VERBOSE, f"[INFO] *** VALID LEN: {len(self.valid_loader.dataset)} ***") if not infer_mode else None
 
-		self.MODEL_SAVEPATH = save_path
+		self.MODEL_SAVEPATH = os.path.join(save_path, pretrained_name)
 		os.makedirs(self.MODEL_SAVEPATH, exist_ok=True) if not infer_mode else None
 
 		self.PRETRAINED_NAME = pretrained_name
@@ -234,6 +237,7 @@ class Runner:
 
 		total_data = len(self.train_loader.dataset)
 		batch_number = total_data // self.TRAIN_CONFIG.BATCH_SIZE 
+		num_iter = (epoch - 1) * batch_number
 
 		for batch_idx, (data, target) in enumerate(self.train_loader):
 			batch_time_start = time.time()
@@ -251,22 +255,24 @@ class Runner:
 			train_correct += pred.eq(target.view_as(pred)).sum().item()
 			train_total += target.size(0)
 
-			self.writer.add_scalar(f"Epoch_{epoch}/train_accuracy", 100. * train_correct / train_total, batch_idx)
-			self.writer.add_scalar(f"Epoch_{epoch}/train_loss", loss.item(), batch_idx)
+			num_iter += 1
+			batch_train_accuracy = 100. * train_correct / train_total
+			self.writer.add_scalar(f"Iter/train_accuracy", batch_train_accuracy, num_iter)
+			self.writer.add_scalar(f"Iter/train_loss", loss.item(), num_iter)
 			self.writer.flush()
 
 			batch_time_end = time.time()
 
 			print_fre = 1 # percent
 			if batch_idx % ((batch_number // 100) * print_fre) == 0:
-				remain_batch = batch_number - batch_idx + 1
-				eta = (batch_time_end - batch_time_start) * remain_batch + batch_number * (self.TRAIN_CONFIG.EPOCH - epoch)
+				remain_batch = batch_number - batch_idx
+				eta = (batch_time_end - batch_time_start) * (remain_batch + batch_number * (self.TRAIN_CONFIG.EPOCH - epoch))
 				eta = str(datetime.timedelta(seconds=eta))
 				iter_num = batch_idx * len(data)
 				iter_num = str(iter_num).zfill(len(str(total_data)))
 				total_percent = 100. * batch_idx / len(self.train_loader)
 				
-				print_verbose(self.VERBOSE, f'Train Epoch {epoch + 1}: [{iter_num}/{total_data} ({total_percent:2.0f}%)] | Loss: {loss.item():.10f} | LR: {self.optimizer.param_groups[0]["lr"]:.10f} | ETA: {eta}')
+				print_verbose(self.VERBOSE, f'Train Epoch {epoch}: [{iter_num}/{total_data} ({total_percent:2.0f}%)] | Loss: {loss.item():.10f} | Acc: {batch_train_accuracy:.4f} | LR: {self.optimizer.param_groups[0]["lr"]:.10f} | ETA: {eta}')
 
 		train_accuracy = 100. * train_correct / len(self.train_loader.dataset)
 		train_loss = train_loss / (batch_idx + 1)
@@ -277,6 +283,11 @@ class Runner:
 		valid_correct = 0
 		valid_total = 0
 		valid_loss = 0
+
+		total_data = len(self.valid_loader.dataset)
+		batch_number = total_data // self.VALID_CONFIG.BATCH_SIZE 
+		num_iter = (epoch - 1) * batch_number
+
 		for batch_idx, (data, target) in enumerate(self.valid_loader):
 			data, target = data.to(self.DEVICE), target.to(self.DEVICE)
 			output = self.model(data)
@@ -289,8 +300,10 @@ class Runner:
 			valid_correct += pred.eq(target.view_as(pred)).sum().item()
 			valid_total += target.size(0)
 
-			self.writer.add_scalar(f"Epoch_{epoch}/valid_accuracy", 100. * valid_correct / valid_total, batch_idx)
-			self.writer.add_scalar(f"Epoch_{epoch}/valid_loss", loss.item(), batch_idx)
+			num_iter += 1
+			batch_valid_accuracy = 100. * valid_correct / valid_total
+			self.writer.add_scalar(f"Iter/valid_accuracy", batch_valid_accuracy, num_iter)
+			self.writer.add_scalar(f"Iter/valid_loss", loss.item(), num_iter)
 			self.writer.flush()
 
 		valid_accuracy = 100. * valid_correct / len(self.valid_loader.dataset)
@@ -348,7 +361,7 @@ class Runner:
 			runtime = tok - tik
 			eta = int(runtime * (self.TRAIN_CONFIG.EPOCH - epoch))
 			eta = str(datetime.timedelta(seconds=eta))
-			print_verbose(self.VERBOSE, f'Runing time: Epoch {epoch + 1}: {str(datetime.timedelta(seconds=int(runtime)))} | ETA: {eta}')
+			print_verbose(self.VERBOSE, f'Runing time: Epoch {epoch}: {str(datetime.timedelta(seconds=int(runtime)))} | ETA: {eta}')
 
 
 	def infer(self, weights_path, input_imagepath):
@@ -437,7 +450,7 @@ if __name__ == "__main__":
 
 	train_config = Config(epoch=100, 
 						  batch_size=64, 
-						  num_workers=8, 
+						  num_workers=1, 
 						  learning_rate=1e-4, 
 						  num_classes=2,
 						  image_size=224)
