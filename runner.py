@@ -171,10 +171,15 @@ class Runner:
 				 save_path = "./weights/",
 				 infer_mode = False):
 
+		self.writer = SummaryWriter()
+
 		self.DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 		self.VERBOSE = verbose
 
 		self.TRAIN_CONFIG = Config(epoch=100, batch_size=16, num_workers=8, learning_rate=1e-4, num_classes=2) if train_config is None else train_config
+		print_verbose(self.VERBOSE, f"[WARNING] TRAIN CONFIG: num_workers > batch_size ({self.TRAIN_CONFIG.NUM_WORKERS} > {self.TRAIN_CONFIG.BATCH_SIZE}) -> set num_workers to {self.TRAIN_CONFIG.BATCH_SIZE}") if self.TRAIN_CONFIG.NUM_WORKERS > self.TRAIN_CONFIG.BATCH_SIZE else None
+		self.TRAIN_CONFIG.NUM_WORKERS = self.TRAIN_CONFIG.BATCH_SIZE if self.TRAIN_CONFIG.NUM_WORKERS > self.TRAIN_CONFIG.BATCH_SIZE else self.TRAIN_CONFIG.NUM_WORKERS
+
 		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN CONFIG ***")
 		print_verbose(self.VERBOSE, f"[INFO] - Epoch: {self.TRAIN_CONFIG.EPOCH}")
 		print_verbose(self.VERBOSE, f"[INFO] - Batch size: {self.TRAIN_CONFIG.BATCH_SIZE}")
@@ -183,6 +188,9 @@ class Runner:
 		print_verbose(self.VERBOSE, f"[INFO] - Num classes: {self.TRAIN_CONFIG.NUM_CLASSES}")
 		
 		self.VALID_CONFIG = Config(batch_size=self.TRAIN_CONFIG.BATCH_SIZE, num_workers=self.TRAIN_CONFIG.NUM_WORKERS) if valid_config is None else valid_config
+		print_verbose(self.VERBOSE, f"[WARNING] VALID CONFIG: num_workers > batch_size ({self.VALID_CONFIG.NUM_WORKERS} > {self.VALID_CONFIG.BATCH_SIZE}) -> set num_workers to {self.VALID_CONFIG.BATCH_SIZE}") if self.VALID_CONFIG.NUM_WORKERS > self.VALID_CONFIG.BATCH_SIZE else None
+		self.VALID_CONFIG.NUM_WORKERS = self.VALID_CONFIG.BATCH_SIZE if self.VALID_CONFIG.NUM_WORKERS > self.VALID_CONFIG.BATCH_SIZE else self.VALID_CONFIG.NUM_WORKERS
+
 		print_verbose(self.VERBOSE, f"[INFO] *** VALID CONFIG ***")
 		print_verbose(self.VERBOSE, f"[INFO] - Batch size: {self.VALID_CONFIG.BATCH_SIZE}")
 		print_verbose(self.VERBOSE, f"[INFO] - Num workers: {self.VALID_CONFIG.NUM_WORKERS}")
@@ -207,7 +215,6 @@ class Runner:
 		self.loss_fn = CustomLoss() if not infer_mode else None
 		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.TRAIN_CONFIG.LEARNING_RATE) if not infer_mode else None
 		self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1, gamma=0.9) if not infer_mode else None
-		self.writer = SummaryWriter()
 
 
 	def __del__(self):
