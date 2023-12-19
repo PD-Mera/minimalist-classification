@@ -219,6 +219,8 @@ class Runner:
 
 	def __del__(self):
 		self.writer.close()
+		self.model.eval()
+		torch.save(self.model.state_dict(), os.path.join(self.MODEL_SAVEPATH, f'{self.PRETRAINED_NAME}_breakpoint.pth'))
 
 
 	def create_dataloader(self):
