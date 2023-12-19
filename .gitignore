@@ -2,3 +2,4 @@ data/
 venv/
 weights/
 runs/
+runner_*

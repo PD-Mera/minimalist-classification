@@ -273,7 +273,7 @@ class Runner:
 			batch_time_end = time.time()
 
 			print_fre = 1 # percent
-			if batch_idx % ((batch_number // 100) * print_fre) == 0:
+			if batch_idx % ((batch_number * print_fre // 100) + 1e-8) == 0:
 				remain_batch = batch_number - batch_idx
 				eta = (batch_time_end - batch_time_start) * (remain_batch + batch_number * (self.TRAIN_CONFIG.EPOCH - epoch))
 				eta = str(datetime.timedelta(seconds=eta))
@@ -371,7 +371,7 @@ class Runner:
 			eta = int(runtime * (self.TRAIN_CONFIG.EPOCH - epoch))
 			eta = str(datetime.timedelta(seconds=eta))
 			print_verbose(self.VERBOSE, f'Runing time: Epoch {epoch}: {str(datetime.timedelta(seconds=int(runtime)))} | ETA: {eta}')
-
+		exit()
 
 	def infer(self, weights_path, input_imagepath):
 		self.model.load_state_dict(torch.load(weights_path))
@@ -467,6 +467,6 @@ if __name__ == "__main__":
 				    train_config = train_config,
 					save_path = "./weights/",
 					infer_mode = False,
-					train_valid_ratio = [0.95, 0.05],)
+					train_valid_ratio = [0.7, 0.3],)
 	runner.train()
 
