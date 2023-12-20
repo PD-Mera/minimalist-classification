@@ -171,7 +171,6 @@ class Runner:
 				 save_path = "./weights/",
 				 infer_mode = False):
 
-		self.writer = SummaryWriter()
 
 		self.DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 		self.VERBOSE = verbose
@@ -218,7 +217,6 @@ class Runner:
 
 
 	def __del__(self):
-		self.writer.close()
 		self.model.eval()
 		torch.save(self.model.state_dict(), os.path.join(self.MODEL_SAVEPATH, f'{self.PRETRAINED_NAME}_breakpoint.pth'))
 
@@ -339,6 +337,8 @@ class Runner:
 
 
 	def train(self):
+		self.writer = SummaryWriter()
+
 		max_valid_accuracy = 0.0
 		for epoch in range(1, self.TRAIN_CONFIG.EPOCH + 1):
 			tik = time.time()
@@ -371,7 +371,8 @@ class Runner:
 			eta = int(runtime * (self.TRAIN_CONFIG.EPOCH - epoch))
 			eta = str(datetime.timedelta(seconds=eta))
 			print_verbose(self.VERBOSE, f'Runing time: Epoch {epoch}: {str(datetime.timedelta(seconds=int(runtime)))} | ETA: {eta}')
-		exit()
+		self.writer.close()
+
 
 	def infer(self, weights_path, input_imagepath):
 		self.model.load_state_dict(torch.load(weights_path))
