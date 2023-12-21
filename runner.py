@@ -165,44 +165,28 @@ class Runner:
 			  	 train_config: Config = None, 
 				 valid_config: Config = None,
 				 train_valid_ratio: list = [0.9, 0.1],
-				 verbose = True, 
-				 pretrained_name = "resnet18",
-				 pretrained_path = None,
-				 save_path = "./weights/",
-				 infer_mode = False):
-
+				 verbose: bool = True, 
+				 pretrained_name: str = "resnet18",
+				 pretrained_path: str = None,
+				 save_path: str = "./weights/",
+				 save_name: str = None):
 
 		self.DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 		self.VERBOSE = verbose
 
 		self.TRAIN_CONFIG = Config(epoch=100, batch_size=16, num_workers=8, learning_rate=1e-4, num_classes=2) if train_config is None else train_config
-		print_verbose(self.VERBOSE, f"[WARNING] TRAIN CONFIG: num_workers > batch_size ({self.TRAIN_CONFIG.NUM_WORKERS} > {self.TRAIN_CONFIG.BATCH_SIZE}) -> set num_workers to {self.TRAIN_CONFIG.BATCH_SIZE}") if self.TRAIN_CONFIG.NUM_WORKERS > self.TRAIN_CONFIG.BATCH_SIZE else None
 		self.TRAIN_CONFIG.NUM_WORKERS = self.TRAIN_CONFIG.BATCH_SIZE if self.TRAIN_CONFIG.NUM_WORKERS > self.TRAIN_CONFIG.BATCH_SIZE else self.TRAIN_CONFIG.NUM_WORKERS
 
-		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN CONFIG ***")
-		print_verbose(self.VERBOSE, f"[INFO] - Epoch: {self.TRAIN_CONFIG.EPOCH}")
-		print_verbose(self.VERBOSE, f"[INFO] - Batch size: {self.TRAIN_CONFIG.BATCH_SIZE}")
-		print_verbose(self.VERBOSE, f"[INFO] - Num workers: {self.TRAIN_CONFIG.NUM_WORKERS}")
-		print_verbose(self.VERBOSE, f"[INFO] - Initial learning rate: {self.TRAIN_CONFIG.LEARNING_RATE}")
-		print_verbose(self.VERBOSE, f"[INFO] - Num classes: {self.TRAIN_CONFIG.NUM_CLASSES}")
-		
 		self.VALID_CONFIG = Config(batch_size=self.TRAIN_CONFIG.BATCH_SIZE, num_workers=self.TRAIN_CONFIG.NUM_WORKERS) if valid_config is None else valid_config
-		print_verbose(self.VERBOSE, f"[WARNING] VALID CONFIG: num_workers > batch_size ({self.VALID_CONFIG.NUM_WORKERS} > {self.VALID_CONFIG.BATCH_SIZE}) -> set num_workers to {self.VALID_CONFIG.BATCH_SIZE}") if self.VALID_CONFIG.NUM_WORKERS > self.VALID_CONFIG.BATCH_SIZE else None
 		self.VALID_CONFIG.NUM_WORKERS = self.VALID_CONFIG.BATCH_SIZE if self.VALID_CONFIG.NUM_WORKERS > self.VALID_CONFIG.BATCH_SIZE else self.VALID_CONFIG.NUM_WORKERS
 
-		print_verbose(self.VERBOSE, f"[INFO] *** VALID CONFIG ***")
-		print_verbose(self.VERBOSE, f"[INFO] - Batch size: {self.VALID_CONFIG.BATCH_SIZE}")
-		print_verbose(self.VERBOSE, f"[INFO] - Num workers: {self.VALID_CONFIG.NUM_WORKERS}")
-
 		self.TRAIN_VALID_RATIO = train_valid_ratio if sum(train_valid_ratio) == 1 else [0.9, 0.1]
-		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN VALID RATIO: {self.TRAIN_VALID_RATIO} ***")
 
-		self.train_loader, self.valid_loader = self.create_dataloader() if not infer_mode else (None, None)
-		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN LEN: {len(self.train_loader.dataset)} ***") if not infer_mode else None
-		print_verbose(self.VERBOSE, f"[INFO] *** VALID LEN: {len(self.valid_loader.dataset)} ***") if not infer_mode else None
-
-		self.MODEL_SAVEPATH = os.path.join(save_path, pretrained_name)
-		os.makedirs(self.MODEL_SAVEPATH, exist_ok=True) if not infer_mode else None
+		if save_name is not None:
+			self.MODEL_SAVEPATH = os.path.join(save_path, save_name)
+		else:
+			self.MODEL_SAVEPATH = os.path.join(save_path, pretrained_name)
+		os.makedirs(self.MODEL_SAVEPATH, exist_ok=True) 
 
 		self.PRETRAINED_NAME = pretrained_name
 		self.model = BaseModel(pretrained_name = self.PRETRAINED_NAME, 
@@ -211,16 +195,7 @@ class Runner:
 		self.model = self.model.to(self.DEVICE)
 		self.model.load_state_dict(torch.load(pretrained_path)) if pretrained_path is not None else None
 
-		self.loss_fn = CustomLoss() if not infer_mode else None
-		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.TRAIN_CONFIG.LEARNING_RATE) if not infer_mode else None
-		self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1, gamma=0.9) if not infer_mode else None
-
-
-	def __del__(self):
-		self.model.eval()
-		torch.save(self.model.state_dict(), os.path.join(self.MODEL_SAVEPATH, f'{self.PRETRAINED_NAME}_breakpoint.pth'))
-
-
+		
 	def create_dataloader(self):
 		dataset = LoadDataset(image_size=self.TRAIN_CONFIG.IMAGE_SIZE)
 		train_data, valid_data = torch.utils.data.random_split(dataset, self.TRAIN_VALID_RATIO)
@@ -337,6 +312,27 @@ class Runner:
 
 
 	def train(self):
+		print_verbose(self.VERBOSE, f"[WARNING] TRAIN CONFIG: num_workers > batch_size ({self.TRAIN_CONFIG.NUM_WORKERS} > {self.TRAIN_CONFIG.BATCH_SIZE}) -> set num_workers to {self.TRAIN_CONFIG.BATCH_SIZE}") if self.TRAIN_CONFIG.NUM_WORKERS > self.TRAIN_CONFIG.BATCH_SIZE else None
+		print_verbose(self.VERBOSE, f"[WARNING] VALID CONFIG: num_workers > batch_size ({self.VALID_CONFIG.NUM_WORKERS} > {self.VALID_CONFIG.BATCH_SIZE}) -> set num_workers to {self.VALID_CONFIG.BATCH_SIZE}") if self.VALID_CONFIG.NUM_WORKERS > self.VALID_CONFIG.BATCH_SIZE else None
+		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN CONFIG ***")
+		print_verbose(self.VERBOSE, f"[INFO] - Epoch: {self.TRAIN_CONFIG.EPOCH}")
+		print_verbose(self.VERBOSE, f"[INFO] - Batch size: {self.TRAIN_CONFIG.BATCH_SIZE}")
+		print_verbose(self.VERBOSE, f"[INFO] - Num workers: {self.TRAIN_CONFIG.NUM_WORKERS}")
+		print_verbose(self.VERBOSE, f"[INFO] - Initial learning rate: {self.TRAIN_CONFIG.LEARNING_RATE}")
+		print_verbose(self.VERBOSE, f"[INFO] - Num classes: {self.TRAIN_CONFIG.NUM_CLASSES}")
+		print_verbose(self.VERBOSE, f"[INFO] *** VALID CONFIG ***")
+		print_verbose(self.VERBOSE, f"[INFO] - Batch size: {self.VALID_CONFIG.BATCH_SIZE}")
+		print_verbose(self.VERBOSE, f"[INFO] - Num workers: {self.VALID_CONFIG.NUM_WORKERS}")
+		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN VALID RATIO: {self.TRAIN_VALID_RATIO} ***")
+
+		self.train_loader, self.valid_loader = self.create_dataloader()
+		print_verbose(self.VERBOSE, f"[INFO] *** TRAIN LEN: {len(self.train_loader.dataset)} ***")
+		print_verbose(self.VERBOSE, f"[INFO] *** VALID LEN: {len(self.valid_loader.dataset)} ***")
+
+		self.loss_fn = CustomLoss()
+		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.TRAIN_CONFIG.LEARNING_RATE)
+		self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1, gamma=0.9)
+
 		self.writer = SummaryWriter()
 
 		max_valid_accuracy = 0.0
@@ -467,7 +463,6 @@ if __name__ == "__main__":
 	runner = Runner(pretrained_name = "mobilenetv3_small_050.lamb_in1k",
 				    train_config = train_config,
 					save_path = "./weights/",
-					infer_mode = False,
 					train_valid_ratio = [0.7, 0.3],)
 	runner.train()
 
