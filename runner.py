@@ -367,6 +367,7 @@ class Runner:
 			eta = int(runtime * (self.TRAIN_CONFIG.EPOCH - epoch))
 			eta = str(datetime.timedelta(seconds=eta))
 			print_verbose(self.VERBOSE, f'Runing time: Epoch {epoch}: {str(datetime.timedelta(seconds=int(runtime)))} | ETA: {eta}')
+		
 		self.writer.close()
 
 
