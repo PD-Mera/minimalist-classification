@@ -246,7 +246,7 @@ class Runner:
 			batch_time_end = time.time()
 
 			print_fre = 1 # percent
-			if batch_idx % ((batch_number * print_fre // 100) + 1e-8) == 0:
+			if batch_idx % ((batch_number * print_fre // 100)) == 0:
 				remain_batch = batch_number - batch_idx
 				eta = (batch_time_end - batch_time_start) * (remain_batch + batch_number * (self.TRAIN_CONFIG.EPOCH - epoch))
 				eta = str(datetime.timedelta(seconds=eta))
